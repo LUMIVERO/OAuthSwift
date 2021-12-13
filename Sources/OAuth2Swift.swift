@@ -23,6 +23,9 @@ open class OAuth2Swift: OAuthSwift {
     /// Encode callback url inside the query, this is second encoding phase when the entire query string gets assembled. In rare 
     /// cases, like with Imgur, the url needs to be encoded only once and this value needs to be set to `false`.
     open var encodeCallbackURLQuery: Bool = true
+	
+	/// oauthToken nonce
+	open var nonce : String = ""
 
     var consumerKey: String
     var consumerSecret: String
@@ -220,6 +223,12 @@ open class OAuth2Swift: OAuthSwift {
                 failure?(OAuthSwiftError.serverError(message: message))
                 return
             }
+			
+			if (!this.isValidNonce(oauthToken: accessToken.safeStringByRemovingPercentEncoding))
+			{
+				failure?(OAuthSwiftError.invaldNonce)
+				return
+			}
 
             if let refreshToken = responseParameters["refresh_token"] as? String {
                 this.client.credential.oauthRefreshToken = refreshToken.safeStringByRemovingPercentEncoding
@@ -259,6 +268,38 @@ open class OAuth2Swift: OAuthSwift {
             return self.client.request(accessTokenUrl, method: .POST, parameters: parameters, headers: finalHeaders, checkTokenExpiration: false, success: successHandler, failure: failure)
         }
     }
+	
+	fileprivate func isValidNonce(oauthToken: String) -> Bool
+	{
+		let segments = oauthToken.components(separatedBy: ".")
+		var base64String = segments[1]
+		let requiredLength = Int(4 * ceil(Float(base64String.count) / 4.0))
+		let nbrPaddings = requiredLength - base64String.count
+		if nbrPaddings > 0 {
+			let padding = String().padding(toLength: nbrPaddings, withPad: "=", startingAt: 0)
+			base64String = base64String.appending(padding)
+		}
+		base64String = base64String.replacingOccurrences(of: "-", with: "+")
+		base64String = base64String.replacingOccurrences(of: "_", with: "/")
+		let decodedData = Data(base64Encoded: base64String, options: Data.Base64DecodingOptions(rawValue: UInt(0)))
+		
+		let base64Decoded: String = String(data: decodedData! as Data, encoding: String.Encoding(rawValue: String.Encoding.utf8.rawValue))!
+		
+		let tokenComponents = base64Decoded.components(separatedBy: ",")
+		for component in tokenComponents
+		{
+			let nonceStrings = component.components(separatedBy: ":")
+			if (nonceStrings[0] == "\"nonce\"")
+			{
+				let responseNonce = nonceStrings[1].components(separatedBy: "\"").filter({$0 != ""}).first
+				if (self.nonce.lowercased().compare(responseNonce!.lowercased()) != .orderedSame)
+				{
+					return false
+				}
+			}
+		}
+		return true
+	}
 
     /**
      Convenience method to start a request that must be authorized with the previously retrieved access token.
